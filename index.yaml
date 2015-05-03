@@ -12,6 +12,11 @@ indexes:
 
 - kind: Conference
   properties:
+  - name: Wishlist
+  - name: name
+
+- kind: Conference
+  properties:
   - name: city
   - name: maxAttendees
   - name: month
@@ -94,3 +99,18 @@ indexes:
   properties:
   - name: topics
   - name: name
+
+- kind: Session
+  properties:
+  - name: name
+  - name: speaker
+
+- kind: Session
+  properties:
+  - name: name
+  - name: typeOfSession
+
+- kind: Session
+  properties:
+  - name: startTime
+  - name: typeOfSession

@@ -57,7 +57,9 @@ app.filter('startFrom', function () {
      * @returns {Array|*}
      */
     var filter = function (data, start) {
-        return data.slice(start);
+        if(data){
+            return data.slice(start);
+        }
     }
     return filter;
 });
@@ -86,7 +88,7 @@ app.constant('HTTP_ERRORS', {
  */
 app.factory('oauth2Provider', function ($modal) {
     var oauth2Provider = {
-        CLIENT_ID: 'web-client-id',
+        CLIENT_ID: '132519550159-f1j3pdm1d8r4he2cv0pdaecgmalohbst.apps.googleusercontent.com',
         SCOPES: 'email profile',
         signedIn: false
     }

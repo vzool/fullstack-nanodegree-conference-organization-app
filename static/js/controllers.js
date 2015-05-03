@@ -352,7 +352,9 @@ conferenceApp.controllers.controller('ShowConferenceCtrl', function ($scope, $lo
      * @returns {number}
      */
     $scope.pagination.numberOfPages = function () {
-        return Math.ceil($scope.conferences.length / $scope.pagination.pageSize);
+        if($scope.conferences && $scope.pagination){
+            return Math.ceil($scope.conferences.length / $scope.pagination.pageSize);
+        }
     };
 
     /**
@@ -588,12 +590,14 @@ conferenceApp.controllers.controller('ConferenceDetailCtrl', function ($scope, $
                     // Failed to get a user profile.
                 } else {
                     var profile = resp.result;
-                    for (var i = 0; i < profile.conferenceKeysToAttend.length; i++) {
-                        if ($routeParams.websafeConferenceKey == profile.conferenceKeysToAttend[i]) {
-                            // The user is attending the conference.
-                            $scope.alertStatus = 'info';
-                            $scope.messages = 'You are attending this conference';
-                            $scope.isUserAttending = true;
+                    if(profile.conferenceKeysToAttend){
+                        for (var i = 0; i < profile.conferenceKeysToAttend.length; i++) {
+                            if ($routeParams.websafeConferenceKey == profile.conferenceKeysToAttend[i]) {
+                                // The user is attending the conference.
+                                $scope.alertStatus = 'info';
+                                $scope.messages = 'You are attending this conference';
+                                $scope.isUserAttending = true;
+                            }
                         }
                     }
                 }
