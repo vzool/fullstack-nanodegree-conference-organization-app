@@ -161,6 +161,46 @@ for sessionKey in conf.sessionKeysScheduleList:
 
 ## Task #4
 
+I implemented Featured Speaker by made a static function inside `ConferenceApi` which will be accessible from `main.py`, and as there is no any conditions for featured speakers I made my own conditions which is one condition.
+
+The filter condition is any Entity in Session has a value in speaker attribute, that Entity is featured for me.
+
+```python
+# Static method
+@staticmethod
+def _getFeaturedSpeaker():
+        
+	q = Session.query()
+	q = q.filter(Session.speaker != None)
+
+	return q
+```
+
+After that I made an `GetFeaturedSpeakerHandler` handler for that request in `main.py` script file.
+
+```python
+# Class Handler
+class GetFeaturedSpeakerHandler(webapp2.RequestHandler):
+    def get(self):
+        """Gety featured speaker request"""
+        ConferenceApi._getFeaturedSpeaker()
+```
+
+Add additional line in `app = webapp2.WSGIApplication`, and it look like this:
+
+```python
+app = webapp2.WSGIApplication([
+    # ..
+    ('/speaker/featured', GetFeaturedSpeakerHandler),
+], debug=True)
+
+``` 
+
+# Licence
+
+It's Completely Free. But, Do whatever you like to do on your own full responsibility;
+
+This licence is known with [MIT License](7) in professional networks.
 
 [1]: https://developers.google.com/appengine
 [2]: http://python.org
@@ -168,3 +208,4 @@ for sessionKey in conf.sessionKeysScheduleList:
 [4]: https://console.developers.google.com/
 [5]: https://localhost:8080/
 [6]: https://developers.google.com/appengine/docs/python/endpoints/endpoints_tool
+[7]: http://vzool.mit-license.org/

@@ -826,7 +826,6 @@ class ConferenceApi(remote.Service):
         
         q = Session.query()
         q = q.filter(Session.speaker != None)
-        q = q.get()
 
         return q
 
