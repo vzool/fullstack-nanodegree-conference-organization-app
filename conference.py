@@ -54,6 +54,10 @@ API_EXPLORER_CLIENT_ID = endpoints.API_EXPLORER_CLIENT_ID
 MEMCACHE_ANNOUNCEMENTS_KEY = "RECENT_ANNOUNCEMENTS"
 ANNOUNCEMENT_TPL = ('Last chance to attend! The following conferences '
                     'are nearly sold out: %s')
+
+MEMCACHE_SESSION_ANNOUNCEMENTS_KEY = "SESSION_ADS"
+ANNOUNCEMENT_SESSION_TPL = ('Most featured speaker! The following session '
+                    'may change your life: %s')
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 DEFAULTS = {
@@ -100,7 +104,7 @@ SESSION_POST_REQUEST = endpoints.ResourceContainer(
 
 SESSION_TYPE_GET_REQUEST = endpoints.ResourceContainer(
     websafeConferenceKey=messages.StringField(1),
-    sessionType=messages.StringField(2),
+    sessionType=messages.StringField(2, required=True),
 )
 
 SESSION_GET_REQUEST = endpoints.ResourceContainer(
@@ -601,6 +605,7 @@ class ConferenceApi(remote.Service):
         return sf
 
     # @ndb.transactional(xg=True)
+    # @ndb.transactional()
     def _createSessionObject(self, request):
         # preload necessary data items
         user = endpoints.get_current_user()
@@ -656,18 +661,20 @@ class ConferenceApi(remote.Service):
         c_key = ndb.Key(Session, c_id, parent=p_key)
         data['key'] = c_key
         
-        # check if Session already in Conferene Schedule List
-        if c_key.urlsafe() in conf.sessionKeysScheduleList:
-            raise ConflictException(
-                "You have already create this Session for this Conference")
-        
         # Add Session id to Conference Sessions
-        conf.sessionKeysScheduleList.append(c_key.urlsafe())
-        conf.put()
+        if not c_key.urlsafe() in conf.sessionKeysScheduleList:
+            conf.sessionKeysScheduleList.append(c_key.urlsafe())
+            conf.put()
 
         # create Session, send email to organizer confirming
         # creation of Session & return (modified) SessionForm
         Session(**data).put()
+
+        taskqueue.add(params={'email': user.email(),
+            'sessionInfo': repr(request)},
+            url='/tasks/send_session_confirmation_email'
+        )
+
         return self._copySessionToForm(request)
     
     # createSession(SessionForm, websafeConferenceKey)
@@ -686,22 +693,20 @@ class ConferenceApi(remote.Service):
         """Get Conference Sessions"""
         # get Conference object from request; bail if not found
         try:
-            conf = ndb.Key(urlsafe=request.websafeConferenceKey).get()
-            if not conf:
+            conf = ndb.Key(urlsafe=request.websafeConferenceKey)
+            kind = conf.kind()
+            conf = conf.get()
+
+            if not conf or kind != 'Conference':
                 raise endpoints.NotFoundException(
                     'No conference found with key: %s' % request.websafeConferenceKey)
         except Exception, e:
             raise endpoints.NotFoundException(
                 'No conference found with key: %s' % request.websafeConferenceKey)
 
-        # Sessions data temp memory
-        items = []
-        
-        # Loop through session keys and get session data itself
-        for sessionKey in conf.sessionKeysScheduleList:
-            sess = ndb.Key(urlsafe = sessionKey).get()
-            if sess:
-                items.append(sess)
+        # Get All sessions in list
+        sess_keys = [ndb.Key(urlsafe=wsck) for wsck in conf.sessionKeysScheduleList]
+        items = ndb.get_multi(sess_keys)
 
         # return results
         return SessionForms(
@@ -711,7 +716,7 @@ class ConferenceApi(remote.Service):
     # getConferenceSessionsByType(websafeConferenceKey, typeOfSession)
     @endpoints.method(SESSION_TYPE_GET_REQUEST, SessionForms,
         path='getConferenceSessionsByType/{websafeConferenceKey}',
-        http_method='POST', name='getConferenceSessionsByType')    
+        http_method='GET', name='getConferenceSessionsByType')    
     def getConferenceSessionsByType(self, request):
         """Get Conference Sessions by Type"""
         # get Conference object from request; bail if not found
@@ -727,14 +732,11 @@ class ConferenceApi(remote.Service):
         if not request.sessionType:
             raise endpoints.NotFoundException('SessionType is required')
 
-        # Sessions data temp memory
-        items = []
+        # Get All sessions keys in list
+        sess_keys = [ndb.Key(urlsafe=wsck) for wsck in conf.sessionKeysScheduleList]
         
-        # Loop through session keys and get session data itself
-        for sessionKey in conf.sessionKeysScheduleList:
-            sess = ndb.Key(urlsafe = sessionKey).get()
-            if sess and sess.typeOfSession == request.sessionType:
-                items.append(sess)
+        # filter session by typeOfSession
+        items = Session.gql("WHERE typeOfSession = :1 AND __key__ IN :2", request.sessionType, sess_keys)
 
         # return results
         return SessionForms(
@@ -762,7 +764,7 @@ class ConferenceApi(remote.Service):
     # addSessionToWishlist(SessionKey)
     @endpoints.method(SESSION_GET_REQUEST, SessionForm,
         path='addSessionToWishlist/{websafeSessionKey}',
-        http_method='GET', name='addSessionToWishlist')
+        http_method='POST', name='addSessionToWishlist')
     def addSessionToWishlist(self, request):
         """Add Session to Wishlist"""
         # preload necessary data items
@@ -773,8 +775,12 @@ class ConferenceApi(remote.Service):
 
         # get Session object from request; bail if not found
         try:
-            sess = ndb.Key(urlsafe=request.websafeSessionKey).get()
-            if not sess:
+            sess = ndb.Key(urlsafe=request.websafeSessionKey)
+            kind = sess.kind()
+            sess = sess.get()
+
+            # check if the key is a Session Kind
+            if not sess or kind != 'Session':
                 raise endpoints.NotFoundException(
                     'No session found with key: %s' % request.websafeSessionKey)
         except Exception, e:
@@ -788,6 +794,7 @@ class ConferenceApi(remote.Service):
                 'Session already added to wish list with key: %s' % request.websafeSessionKey
             )
 
+
         prof.Wishlist.append(request.websafeSessionKey)
         prof.put()
 
@@ -799,35 +806,63 @@ class ConferenceApi(remote.Service):
         http_method='GET', name='getSessionsInWishlist')
     def getSessionsInWishlist(self, request):
         """Get Conference Sessions in Wishlist"""
-        # preload necessary data items
-        user = endpoints.get_current_user()
-        if not user:
-            raise endpoints.UnauthorizedException('Authorization required')
-        user_id = getUserId(user)
+        try:
+            # preload necessary data items
+            user = endpoints.get_current_user()
+            if not user:
+                raise endpoints.UnauthorizedException('Authorization required')
+            user_id = getUserId(user)
 
-        prof = self._getProfileFromUser() # get user Profile
+            prof = self._getProfileFromUser() # get user Profile
 
-        items = []
+            # Get All sessions keys in list
+            sess_keys = [ndb.Key(urlsafe=wsck) for wsck in prof.Wishlist]
+            
+            # filter session by session key
+            items = Session.gql("WHERE __key__ IN :1", sess_keys)
 
-        for s in prof.Wishlist:
-            sess = ndb.Key(urlsafe=s).get()
-            if sess:
-                items.append(sess)
+            # return results
+            return SessionForms(
+                items=[self._copySessionToForm(sess) for sess in items]
+            )
+        except:
+            return SessionForms()
 
-        # return results
-        return SessionForms(
-            items=[self._copySessionToForm(sess) for sess in items]
-        )
+# -- Session Announcement ------------------------------------------------------------------
 
-
-    # Static method
     @staticmethod
-    def _getFeaturedSpeaker():
-        
-        q = Session.query()
-        q = q.filter(Session.speaker != None)
+    def _cacheSessionAnnouncement():
+        """Create Session Announcement & assign to memcache; used by
+        memcache cron job & putSessionAnnouncement().
+        """
 
-        return q
+        sess = Session.query(ndb.AND(
+            Session.speaker != None
+        )).fetch(projection=[Session.speaker])
+
+        if sess:
+            # If there are almost sold out conferences,
+            # format announcement and set it in memcache
+            announcement = ANNOUNCEMENT_SESSION_TPL % (
+                ', '.join(s.speaker for s in sess))
+            memcache.set(MEMCACHE_SESSION_ANNOUNCEMENTS_KEY, announcement)
+        else:
+            # If there are no sold out conferences,
+            # delete the memcache announcements entry
+            announcement = ""
+            memcache.delete(MEMCACHE_SESSION_ANNOUNCEMENTS_KEY)
+
+        return announcement
+
+    @endpoints.method(message_types.VoidMessage, StringMessage,
+            path='conference/session/announcement/get',
+            http_method='GET', name='getSessionAnnouncement')
+    def getSessionAnnouncement(self, request):
+        """Return Session Announcement from memcache."""
+        return StringMessage(data=memcache.get(MEMCACHE_SESSION_ANNOUNCEMENTS_KEY) or "")
+
+
+# -- Session Announcement ------------------------------------------------------------------
 
     # push task
     @endpoints.method(message_types.VoidMessage, message_types.VoidMessage,
@@ -849,9 +884,11 @@ class ConferenceApi(remote.Service):
     def WorkingOnQuery(self, request):
         """Some Query Stuff"""
         # Query about all session not Workshop and before 7 pm
-        q = Session.query()
-        q = q.filter(Session.startTime < 19)
-        q = q.filter(Session.typeOfSession != 'WORKSHOP')
+        q = Session.query(
+            Session.session_condition_1 == True
+        )
+        
+        q.get()
 
         return message_types.VoidMessage()
 

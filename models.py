@@ -126,6 +126,8 @@ class Session(ndb.Model):
     date = ndb.DateProperty()
     startTime = ndb.IntegerProperty()
 
+    session_condition_1 = ndb.ComputedProperty(lambda self: self.typeOfSession != 'WORKSHOP' and self.startTime < 19)
+
 class SessionForm(messages.Message):
     """Session Form -- Session outbound from message"""
     name = messages.StringField(1)

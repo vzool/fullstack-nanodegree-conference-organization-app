@@ -85,12 +85,12 @@ Modifications that take place at `Conference` objects:
 ```python
 class Conference(ndb.Model):
     # ..
-	# ..
+    # ..
     sessionKeysScheduleList     = ndb.StringProperty(repeated=True)
 
 class ConferenceForm(messages.Message):
     # ..
-	# ..
+    # ..
     sessionKeysScheduleList = messages.StringField(13,repeated=True)
 ```
 
@@ -100,6 +100,18 @@ Conference Session has many endpoints which are they:
 - getConferenceSessionsByType(websafeConferenceKey, typeOfSession): get all Sessions with specific type(Lecture, Workshop, ..., etc).
 - getSessionsBySpeaker(speaker): get all Sessions by speaker.
 - createSession(SessionForm, websafeConferenceKey): create new Session for specific Conference.
+
+### How Query Works?
+
+In fact when I like to generate new Session, Google Datastore method is create Key from Profile Key based on user ID and Session ID based on Profile key.
+
+So, Session Key will like this:
+
+```yaml
+User ID -> Profile ID -> Session ID
+```
+
+Which leads to Entity in Session Kind.
 
 ## Task #2
 
@@ -114,12 +126,12 @@ Modifications that take place at `Profile` objects:
 ```python
 class Profile(ndb.Model):
     # ..
-	# ..
+    # ..
     Wishlist = ndb.StringProperty(repeated=True)
 
 class ProfileForm(messages.Message):
     # ..
-	# ..
+    # ..
     Wishlist = messages.StringField(5, repeated=True)
 ```
 
@@ -131,52 +143,31 @@ Wishlist Session has two endpoints which are:
 
 ## Task #3
 
-The main problem that I faced with Queries in General was I don't know how to query Multiple Entities by `urlsafe` and then filter them with specific filters.
+The main problem that I faced with Queries in General was I don't know how to query Multiple Entities by `urlsafe` and then filter them with specific filters in two steps only.
 
 My methodology to solve this problem as following:
 
-- Make an empty array `items`.
-- Loop through all `sessionKeysScheduleList`.
-- Make query based on `urlsafe`.
-- Check with any filters I like to use.
-- Append any Session to `items` if it pass filters.
-- Finally, return `items` to rest of the endpoint Function.
+- Convert `urlsafe` into `ndb.Key`.
+- Append all `ndb.Keys`.
+- Finally, query on `ndb.Keys` and then return `items` which are `Session` Kind to rest of the endpoint Function.
 
+Always, Don't help Google by making things that already done for you, Let Google help you if you believe in them.
 
-I did something worked for me, I'm sure there are many ways to implement this.
-
-But I'm not sure if it's correct.
 
 ```python
-# Sessions data temp memory
-items = []
-        
 # Loop through session keys and get session data itself
-for sessionKey in conf.sessionKeysScheduleList:
-	sess = ndb.Key(urlsafe = sessionKey).get()
-	if sess and sess.typeOfSession == request.sessionType:
-		items.append(sess)
+sess_keys = [ndb.Key(urlsafe=wsck) for wsck in conf.sessionKeysScheduleList]
+items = ndb.get_multi(sess_keys)
 ```
 
 
 ## Task #4
 
-I implemented Featured Speaker by made a static function inside `ConferenceApi` which will be accessible from `main.py`, and as there is no any conditions for featured speakers I made my own conditions which is one condition.
+I implemented Featured Speaker by made a static function inside `ConferenceApi` which will be accessible from `main.py`.
 
-The filter condition is any Entity in Session has a value in speaker attribute, that Entity is featured for me.
+I made `_cacheSessionAnnouncement` and I cache Session query result into Memcache, even you can access this feature by this url: `http://localhost:8080/speaker/featured` and if you want to check the result from cached data check this url: `http://apis-explorer.appspot.com/apis-explorer/?base=http://localhost:8080/_ah/api#p/conference/v1/conference.getSessionAnnouncement?_h=60&`.
 
-```python
-# Static method
-@staticmethod
-def _getFeaturedSpeaker():
-        
-	q = Session.query()
-	q = q.filter(Session.speaker != None)
-
-	return q
-```
-
-After that I made an `GetFeaturedSpeakerHandler` handler for that request in `main.py` script file.
+To make this work for me I made an `GetFeaturedSpeakerHandler` handler for that request in `main.py` script file.
 
 ```python
 # Class Handler
@@ -196,11 +187,47 @@ app = webapp2.WSGIApplication([
 
 ``` 
 
+## Additional Task
+
+I worked with querys, and I made it.
+
+The question was How to make a Query about all session not Workshop and before 7 pm?
+
+So, there is `NOT EQUAL` and `LESS THAT` tokens in the same filter, which it is not acceptable by Google.
+And always an Error message appears said: "No not possible".
+
+After I dig in the internet I found ComputedProperty, which are conditions in the Model itself, strange and weird.
+And as you can see below there is a condition in way of `ComputedProperty`.
+
+```python
+
+class Session(ndb.Model):
+   
+    # ..
+
+    session_condition_1 = ndb.ComputedProperty(lambda self: self.typeOfSession != 'WORKSHOP' and self.startTime < 19)
+
+```
+
+When you like to trigger that condition at any Entity inside Session Kind you can just do this:
+
+```python
+q = Session.query(
+    Session.session_condition_1 == True
+)
+        
+q.get()
+
+```
+
+Finally, Google never complains again.
+
+
 # Licence
 
 It's Completely Free. But, Do whatever you like to do on your own full responsibility;
 
-This licence is known with [MIT License](7) in professional networks.
+This licence is known with [MIT License][7] in professional networks.
 
 [1]: https://developers.google.com/appengine
 [2]: http://python.org
@@ -208,4 +235,4 @@ This licence is known with [MIT License](7) in professional networks.
 [4]: https://console.developers.google.com/
 [5]: https://localhost:8080/
 [6]: https://developers.google.com/appengine/docs/python/endpoints/endpoints_tool
-[7]: http://vzool.mit-license.org/
+[7]: http://vzool.mit-license.org
